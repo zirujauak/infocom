@@ -7,7 +7,6 @@ use super::text::{ Decoder, Encoder };
 use super::state::FrameStack;
 
 pub struct Dictionary {
-    address: usize,
     separators: HashSet<char>,
     entry_length: usize,
     entry_count: usize,
@@ -37,7 +36,7 @@ impl Dictionary {
         let entry_count = mem.get_word(address + 2 + separator_count)? as usize;
         let entries_address = address + 4 + separator_count;
         
-        Ok(Dictionary { address, separators, entry_length, entry_count, entries_address, encoder })
+        Ok(Dictionary { separators, entry_length, entry_count, entries_address, encoder })
     }
 
     fn lookup_word(&self, mem: &MemoryMap, word: &str) -> Result<Option<u16>,InfocomError> {

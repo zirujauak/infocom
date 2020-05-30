@@ -1,12 +1,11 @@
-use log::{debug, error, warn};
-use serde::{Deserialize, Serialize};
+use log::{debug, warn};
 
 use super::InfocomError;
 use super::memory::{MemoryMap, Version};
 use super::state::FrameStack;
 use super::text::Decoder;
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone)]
 struct Property {
     number: usize,
     address: usize,
@@ -71,14 +70,13 @@ impl Property {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone)]
 struct PropertyTable {
     address: usize,
     short_name: String,
     properties: Vec<Property>,
 }
 
-#[derive(Serialize, Deserialize)]
 pub struct Object {
     number: usize,
     address: usize,
@@ -440,31 +438,6 @@ impl ObjectTable {
         o.clear_attribute(attribute_number)?;
         o.save_attributes(state)?;
         Ok(o)
-    }
-
-    pub fn read_property_data(&self, memory: &MemoryMap, object_number: usize, property_number: usize) -> Result<Vec<u8>, InfocomError> {
-        let o = self.get_object(memory, object_number)?;
-        if let Some(p) = o.get_property(property_number) {
-            Ok(p.data.to_vec())
-        } else {
-            if let Some(v) = self.default_properties.get(property_number - 1) {
-                let b1 = ((v >> 8) & 0xFF) as u8;
-                let b2 = (v & 0xFF) as u8;
-                Ok(vec![b1, b2])
-            } else {
-                Err(InfocomError::Memory(format!("Invalid property number: ${:02x}", property_number)))
-            }
-        }
-    }
-
-    fn get_default_property(&self, property_number: usize) -> Result<Vec<u8>, InfocomError> {
-        if let Some(v) = self.default_properties.get(property_number - 1) {
-            let b1 = ((v >> 8) & 0xFF) as u8;
-            let b2 = (v & 0xFF) as u8;
-            Ok(vec![b1, b2])
-        } else {
-            Err(InfocomError::Memory(format!("Invalid property number: ${:02x}", property_number)))
-        }
     }
 
     pub fn get_property_value(&self, memory: &MemoryMap, object_number: usize, property_number: usize) -> Result<u16, InfocomError> {

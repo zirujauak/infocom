@@ -2,12 +2,11 @@ use super::memory::{ MemoryMap, Version };
 use super::InfocomError;
 use super::dictionary::Dictionary;
 
-use serde::Serialize;
 use log::debug;
 use rand::rngs::ThreadRng;
 use rand::Rng;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Routine {
     address: usize,
     default_variables: Vec<u16>,
@@ -34,7 +33,7 @@ impl Routine {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Frame {
     routine: Routine,
     local_variables: Vec<u16>,

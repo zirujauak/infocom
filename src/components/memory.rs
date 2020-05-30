@@ -1,13 +1,8 @@
-use serde::{Deserialize, Serialize};
-use std::default::Default;
 use std::convert::TryFrom;
-use log::{error};
-use redis::{FromRedisValue, ToRedisArgs, RedisResult, Value};
 
-use super::redis_connection::{RedisConnection};
 use super::InfocomError;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 pub enum Version {
     V(u8)
 }
@@ -21,7 +16,6 @@ pub trait ZValue {
     fn size() -> usize;
 }
 
-#[derive(Serialize, Deserialize)]
 pub struct ZByte {
     pub value: u8
 }
@@ -36,7 +30,6 @@ impl ZValue for ZByte {
     }
 }
 
-#[derive(Serialize, Deserialize)]
 pub struct ZWord {
     pub value: u16
 }
@@ -54,7 +47,6 @@ impl ZValue for ZWord {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
 pub struct MemoryMap {
     pub version: Version,
     memory_map: Vec<u8>,
@@ -81,43 +73,6 @@ impl TryFrom<Vec<u8>> for MemoryMap {
     }
 }
 
-impl TryFrom<&String> for MemoryMap {
-    type Error = InfocomError;
-
-    fn try_from(id: &String) -> Result<MemoryMap, InfocomError> {
-        let mut con = RedisConnection::new("redis://localhost")?;
-        let mem: MemoryMap = con.get(id)?;
-        if let Err(e) = con.touch(id) {
-            error!("Error updating expiration for key {}: {}", id, e);
-        }
-        Ok(mem)
-    }
-}
-
-impl FromRedisValue for MemoryMap {
-    fn from_redis_value(v: &Value) -> RedisResult<MemoryMap> {
-        match *v {
-            Value::Data(ref bytes) => Ok(serde_json::from_str(&String::from_utf8(bytes.to_vec()).unwrap()).unwrap()),
-            _ => {
-                error!("Unable to read MemoryMap from redis value: {:?}", v);
-                Err(redis::RedisError::from((redis::ErrorKind::TypeError, 
-                                                "Response was of incompatible type", 
-                                                format!("{:?} (response was {:?})", "response not MemoryMap compatible", v))))       
-            }
-        }
-    }
-}
-
-impl ToRedisArgs for &MemoryMap {
-    fn write_redis_args<W>(&self, out: &mut W) 
-    where
-        W: ?Sized + redis::RedisWrite
-    {
-        let bytes = serde_json::to_string(self).unwrap();
-        out.write_arg(bytes.as_bytes())
-    }
-}
-
 impl MemoryMap {
     fn len(&self) -> usize {
         self.memory_map.len()
@@ -136,6 +91,10 @@ impl MemoryMap {
         self.memory_map.to_vec()
     }
     
+    pub fn get_dynamic_restore(&self) -> Vec<u8> {
+        self.dynamic_restore.to_vec()
+    }
+
     /// Read a byte from the memory map, restricted to the bottom 64k of memory.
     /// 
     /// # Examples

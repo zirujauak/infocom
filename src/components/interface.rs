@@ -41,21 +41,11 @@ impl Curses {
 impl Interface for Curses {
     fn print(&mut self, text: &str) {
         let words: Vec<&str> = text.split(' ').collect();
-        debug!("{:?}", words);
-        let (rows, cols) = self.window.get_row_col_count();
-        debug!("{} {}", rows, cols);
+        let (_, cols) = self.window.get_row_col_count();
         for (i, word) in words.iter().enumerate() {
             let (r,c) = self.window.get_cursor_rc();
-            debug!("{},{} => {} :: {}", r, c, word.len(), cols - c);
             if word.len() > cols as usize - c as usize {
                 self.window.print_char('\n');
-                // if r == rows - 1 {
-                //     self.window.move_rc(0, 0);
-                //     self.window.delete_line();
-                //     self.window.move_rc(rows - 1, 0);
-                // } else {
-                //     self.window.move_rc(r + 1 , 0);
-                // }
             }
             self.window.print(word);
             if i < words.len() - 1 {
@@ -137,7 +127,7 @@ impl Interface for Curses {
         };
 
         let padding = width as usize - 1 - name.len() - left_str.len();
-        for i in 0..padding {
+        for _ in 0..padding {
             self.window.print_char(' ');
         }
         self.window.print(left_str);

@@ -1,4 +1,4 @@
-use super::memory::{ MemoryMap, Version };
+use super::memory::{ Version };
 use super::InfocomError;
 use super::state::FrameStack;
 use super::object_table::ObjectTable;
@@ -7,11 +7,10 @@ use super::interface::{ Interface, StatusLineFormat };
 use super::dictionary::Dictionary;
 
 use log::debug;
-use serde::{ Serialize };
 use std::collections::HashSet;
 use std::iter::FromIterator;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 enum OpcodeForm {
     Long,
     Short,
@@ -33,7 +32,7 @@ impl From<u8> for OpcodeForm {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize)]
+#[derive(Copy, Clone, Debug)]
 enum OperandType {
     LargeConstant,
     SmallConstant,
@@ -52,10 +51,8 @@ impl From<u8> for OperandType {
     }
 }
 
-#[derive(Serialize)]
 pub struct Instruction {
     address: usize,
-    form: OpcodeForm,
     opcode: u8,
     name: String,
     operand_types: Vec<OperandType>,
@@ -107,7 +104,7 @@ impl fmt::Debug for Instruction {
     }
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default)]
 pub struct InstructionResult {
     store_value: Option<u16>,
     branch_condition: Option<bool>,
@@ -626,7 +623,7 @@ impl Instruction {
         Ok(InstructionResult::default())
     }
 
-    fn show_status(&self, state: &mut FrameStack, interface: &mut Interface) -> Result<InstructionResult,InfocomError> {
+    fn show_status(&self, state: &mut FrameStack, interface: &mut dyn Interface) -> Result<InstructionResult,InfocomError> {
         let v1 = state.get_variable(17, false)? as i16;
         let v2 = state.get_variable(18, false)?;
         let name_obj = state.get_variable(16, false)? as usize;
@@ -648,7 +645,35 @@ impl Instruction {
     }
 
     fn verify(&self, state: &mut FrameStack) -> Result<InstructionResult,InfocomError> {
-        Err(InfocomError::Memory(format!("verify not implemented yet")))
+        let m = state.get_memory().get_memory();
+        let d = state.get_memory().get_dynamic_restore();
+        let expected_checksum = state.get_memory().get_word(0x1C)?;
+        let l = state.get_memory().get_word(0x1A)?;
+        let length = l as usize * match state.get_memory().version {
+            Version::V(v) => {
+                match v {
+                    1 | 2 | 3 => 2,
+                    4 | 5 => 4,
+                    _ => 8
+                }
+            }
+        };
+        
+        let mut sum:u32 = 0;
+
+        // Checksum the original dynamic region
+        for i in 0x40..d.len() {
+            sum += d[i] as u32;
+            sum &= 0xFFFF;
+        }
+
+        // Continue sum through static and high memory
+        for i in d.len()..length {
+            sum += m[i] as u32;
+            sum = sum & 0x0FFFF;
+        }
+
+        Ok(InstructionResult { branch_condition: Some(sum == expected_checksum as u32), ..Default::default() })
     }
 
     fn piracy(&self, state: &mut FrameStack) -> Result<InstructionResult,InfocomError> {
@@ -701,22 +726,6 @@ impl Instruction {
 
     fn sread_v1(&self, state: &mut FrameStack, interface: &mut dyn Interface) -> Result<InstructionResult,InfocomError> {
         self.show_status(state, interface)?;
-        // let v2 = state.get_variable(18, false)?;
-        // let name_obj = state.get_variable(16, false)? as usize;
-        // let o = ObjectTable::new(state.get_memory())?.get_object(state.get_memory(), name_obj)?;
-        // let status_type = match state.get_memory().version {
-        //     Version::V(3) => {
-        //         let flags1 = state.get_memory().get_byte(0x01)?;
-        //         if flags1 & 0x02 == 0x02 {
-        //             StatusLineFormat::TIMED
-        //         } else {
-        //             StatusLineFormat::SCORED
-        //         }
-        //     },
-        //     _ => StatusLineFormat::SCORED
-        // };
-
-        // interface.status_line(&o.get_short_name(), status_type, v1, v2);
 
         let text_buffer = self.get_argument(state, 0)? as usize;
         let parse_buffer = self.get_argument(state, 1)? as usize;
@@ -747,20 +756,15 @@ impl Instruction {
 
         let dic = Dictionary::new(state.get_memory())?;
         dic.analyze_text(state, &input, parse_buffer)?;
-        // state.set_byte(parse_buffer + 1, 1)?;
-        // state.set_word(parse_buffer + 2, 0)?;
-        // state.set_byte(parse_buffer + 4, input.len() as u8)?;
-        // state.set_byte(parse_buffer + 5, 1)?;
 
-        // // TODO: Parse words
         Ok(InstructionResult::default())
     }
 
-    fn sread_v4(&self, state: &mut FrameStack) -> Result<InstructionResult,InfocomError> {
+    fn sread_v4(&self, state: &mut FrameStack, interface: &mut dyn Interface) -> Result<InstructionResult,InfocomError> {
         Err(InfocomError::Memory(format!("sread not implemented yet")))
     }
 
-    fn aread(&self, state: &mut FrameStack) -> Result<InstructionResult,InfocomError> {
+    fn aread(&self, state: &mut FrameStack, interface: &mut dyn Interface) -> Result<InstructionResult,InfocomError> {
         Err(InfocomError::Memory(format!("aread not implemented yet")))
     }
 
@@ -938,6 +942,10 @@ impl Instruction {
                         0x16 => self.mul(state),
                         0x17 => self.div(state),
                         0x18 => self.modulo(state),
+                        0x19 => self.call_2s(state),
+                        0x1A => self.call_2n(state),
+                        0x1B => self.set_colour(state),
+                        0x1C => self.throw(state),
                         _ => Err(InfocomError::Memory(format!("Unimplemented opcode ${:02x}", self.opcode)))
                     }
                 } else if self.opcode > 0x7F && self.opcode < 0xB0 {
@@ -950,13 +958,18 @@ impl Instruction {
                         0x05 => self.inc(state),
                         0x06 => self.dec(state),
                         0x07 => self.print_addr(state),
+                        0x08 => self.call_1s(state),
                         0x09 => self.remove_obj(state),
                         0x0A => self.print_obj(state, interface),
                         0x0B => self.ret(state),
                         0x0C => self.jump(state),
                         0x0D => self.print_paddr(state, interface),
                         0x0E => self.load(state),
-                        0x0F => self.not(state),
+                        0x0F => match state.get_memory().version {
+                            Version::V(v) => {
+                                if v < 5 { self.not(state) } else { self.call_1n(state) }
+                            }
+                        }
                         _ => Err(InfocomError::Memory(format!("Unimplemented opcode ${:02x}", self.opcode)))
                     }
                 } else if self.opcode > 0xAF && self.opcode < 0xC0 {
@@ -966,15 +979,22 @@ impl Instruction {
                         0x02 => self.print(state, interface),
                         0x03 => self.print_ret(state, interface),
                         0x04 => self.nop(state),
-                        0x05 => self.save_v1(state),
-                        0x06 => self.restore_v1(state),
+                        0x05 => match state.get_memory().version {
+                            Version::V(v) => if v < 4 { self.save_v1(state) } else { self.save_v4(state) }
+                        },
+                        0x06 => match state.get_memory().version {
+                            Version::V(v) => if v < 4 { self.restore_v1(state) } else { self.restore_v4(state) }
+                        },
                         0x07 => self.restart(state),
                         0x08 => self.ret_popped(state),
-                        0x09 => self.pop(state),
+                        0x09 => match state.get_memory().version {
+                            Version::V(v) => if v < 5 { self.pop(state) } else { self.catch(state) }
+                        },
                         0x0A => self.quit(state),
                         0x0B => self.new_line(state, interface),
                         0x0C => self.show_status(state, interface),
                         0x0D => self.verify(state),
+                        0x0F => self.piracy(state),
                         _ => Err(InfocomError::Memory(format!("Unimplemented opcode ${:02x}", self.opcode)))
                     }
                 } else {
@@ -983,7 +1003,13 @@ impl Instruction {
                         0x01 => self.storew(state),
                         0x02 => self.storeb(state),
                         0x03 => self.put_prop(state),
-                        0x04 => self.sread_v1(state, interface),
+                        0x04 => match state.get_memory().version {
+                            Version::V(v) => match v {
+                                1 | 2 | 3 => self.sread_v1(state, interface),
+                                4 => self.sread_v4(state, interface),
+                                _ => self.aread(state, interface)
+                            }
+                        }
                         0x05 => self.print_char(state, interface),
                         0x06 => self.print_num(state, interface),
                         0x07 => self.random(state),
@@ -991,9 +1017,26 @@ impl Instruction {
                         0x09 => self.pull(state),
                         0x0A => self.split_window(state),
                         0x0B => self.set_window(state),
+                        0x0C => self.call_vs2(state),
+                        0x0D => self.erase_window(state),
+                        0x0E => self.erase_line(state),
+                        0x0F => self.set_cursor(state),
+                        0x10 => self.get_cursor(state),
+                        0x11 => self.set_text_style(state),
+                        0x12 => self.buffer_mode(state),
                         0x13 => self.output_stream(state),
                         0x14 => self.input_stream(state),
                         0x15 => self.sound_effect(state),
+                        0x16 => self.read_char(state),
+                        0x17 => self.scan_table(state),
+                        0x18 => self.not(state),
+                        0x19 => self.call_vn(state),
+                        0x1A => self.call_vn2(state),
+                        0x1B => self.tokenise(state),
+                        0x1C => self.encode_text(state),
+                        0x1D => self.copy_table(state),
+                        0x1E => self.print_table(state),
+                        0x1F => self.check_arg_count(state),
                         _ => Err(InfocomError::Memory(format!("Unimplemented opcode ${:02x}", self.opcode)))
 
                     }
@@ -1110,7 +1153,7 @@ fn get_store_variable(mem: &Vec<u8>, address: usize, opcode: u8, form: &OpcodeFo
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct BranchOffset {
     size: usize,
     condition: bool,
@@ -1465,5 +1508,5 @@ pub fn decode_instruction(state: &FrameStack, address: usize) -> Result<Instruct
         opcode_byte = o;
     }
 
-    Ok(Instruction { address, name, form, opcode: opcode_byte, operand_types, operands, store_variable, branch_offset, next_pc: address + skip })
+    Ok(Instruction { address, name, opcode: opcode_byte, operand_types, operands, store_variable, branch_offset, next_pc: address + skip })
 }
