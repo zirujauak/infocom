@@ -384,7 +384,7 @@ impl Encoder {
         Ok(result)
     }
 
-    fn map_char(&self, c: char) -> Option<(u8, u8)> {
+    pub fn map_char(&self, c: char) -> Option<(u8, u8)> {
         for i in 0..3 {
             for j in 0..self.alphabet.alphabet[i].len() {
                 if c == self.alphabet.alphabet[i][j] {
@@ -416,6 +416,7 @@ impl Encoder {
             }
 
             // TODO: Map extended characters
+            debug!("{}", c);
             for (i, z) in self.alphabet.zscii_table.iter().enumerate() {
                 if *z == c {
                     result.push(155 as u8 + i as u8)

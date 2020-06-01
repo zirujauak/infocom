@@ -19,7 +19,8 @@ pub trait Interface {
 }
 
 pub struct Curses {
-    pub window: EasyCurses
+    pub window: EasyCurses,
+    printed_lines: u32,
 }
 
 impl Curses {
@@ -34,39 +35,97 @@ impl Curses {
         window.refresh();
         window.set_color_pair(colorpair!(White on Black));
 
-        Curses { window: window }
+        Curses { window: window, printed_lines: 0 }
+    }
+
+    fn prompt(&mut self) {
+        let (rows,_) = self.window.get_row_col_count();
+        let (r,_) = self.window.get_cursor_rc();
+
+        if self.printed_lines as i32 >= rows - 2 {
+            self.window.move_rc(r, 0);
+            self.window.print("[MORE]");
+            self.window.refresh();
+            self.window.get_input();
+            self.window.move_rc(r, 0);
+            self.window.print("      ");
+            self.window.move_rc(r, 0);
+            self.window.refresh();
+            self.printed_lines = 0;
+        }
     }
 }
 
-impl Interface for Curses {
+impl Interface for Curses {    
     fn print(&mut self, text: &str) {
         let words: Vec<&str> = text.split(' ').collect();
         let (_, cols) = self.window.get_row_col_count();
         for (i, word) in words.iter().enumerate() {
-            let (r,c) = self.window.get_cursor_rc();
-            if word.len() > cols as usize - c as usize {
-                self.window.print_char('\n');
-            }
-            self.window.print(word);
-            if i < words.len() - 1 {
+            let (_,c) = self.window.get_cursor_rc();
+            if i > 0 && c < cols - 1 {
                 self.window.print_char(' ');
             }
+
+            // Check if the word contains any newline characters
+            let mut slice = *word;
+            while let Some(j) = slice.find('\n') {
+                let (_,c) = self.window.get_cursor_rc();
+                let part = &slice[0..j];
+                // Check if the slice is too long to fit in the remaining space
+                if part.len() + 1 >= cols as usize - c as usize {
+                    self.new_line();
+                }
+
+                // Print the part before the new line
+                self.window.print(part);
+                // ... and the new line
+                self.new_line();
+
+                // Check if there's more after the newline
+                if j < slice.len() {
+                    slice = &slice[j+1..];
+                } else {
+                    slice = "";
+                }
+            }
+            
+            // If there's any text left over, print it, too
+            if slice.len() > 0 {
+                let (_,c) = self.window.get_cursor_rc();
+                if slice.len() >= cols as usize - c as usize {
+                    self.new_line();
+                }
+
+                self.window.print(slice);
+            }
         }
-        
+
         self.window.refresh();
     }
 
     fn new_line(&mut self) {
-        self.window.print_char('\n');
+        let (rows,_) = self.window.get_row_col_count();
+        let (r, _) = self.window.get_cursor_rc();
+
+        if r == rows - 1 {
+            self.window.move_rc(1,0);
+            self.window.delete_line();
+            self.window.move_rc(r, 0);
+        } else {
+            self.window.move_rc(r + 1, 0);
+        }
+        self.printed_lines += 1;
         self.window.refresh();
+        self.prompt();
+
     }
 
     fn read(&mut self, terminating_characters: HashSet<char>, max_chars: usize) -> String {
+        self.printed_lines = 0;
         let mut result = String::new();
         loop {
             if let Some(e) = self.window.get_input() {
                 let (r,c) = self.window.get_cursor_rc();
-                debug!("get_input() -> {:?} at {},{}", e, r, c);
                 match e {
                     easycurses::Input::Character(c) => {
                         if terminating_characters.contains(&c) {
@@ -85,7 +144,7 @@ impl Interface for Curses {
                             }
                         // TODO: Filter the specific accented characters that we support
                         // TODO: include A2 punctuation
-                        } else if c.is_alphabetic() || c.is_ascii() || c as u16 == 32 {
+                        } else if ((c as u16) > 31 && (c as u16) < 127) || ((c as u16) > 155 && (c as u16) < 256) {
                             if result.len() < max_chars {
                                 self.window.print_char(c);
                                 self.window.refresh();

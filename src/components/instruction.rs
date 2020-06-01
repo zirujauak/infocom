@@ -2,7 +2,7 @@ use super::memory::{ Version };
 use super::InfocomError;
 use super::state::FrameStack;
 use super::object_table::ObjectTable;
-use super::text::{ Decoder, Encoder };
+use super::text::Decoder;
 use super::interface::{ Interface, StatusLineFormat };
 use super::dictionary::Dictionary;
 
@@ -667,7 +667,7 @@ impl Instruction {
             sum &= 0xFFFF;
         }
 
-        // Continue sum through static and high memory
+        // Continue sum through static and high
         for i in d.len()..length {
             sum += m[i] as u32;
             sum = sum & 0x0FFFF;
@@ -724,6 +724,82 @@ impl Instruction {
         Ok(InstructionResult::default())
     }
 
+    fn map_char(&self, c: char) -> Option<u8> {
+        match c {
+            '\n' | ' '..='~' => Some(c as u8),
+            'ä' => Some(155),
+            'ö' => Some(156),
+            'ü' => Some(157),
+            'Ä' => Some(158),
+            'Ö' => Some(159),
+            'Ü' => Some(160),
+            'ß' => Some(161),
+            '»' => Some(162),
+            '«' => Some(163),
+            'ë' => Some(164),
+            'ï' => Some(165),
+            'ÿ' => Some(166),
+            'Ë' => Some(167),
+            'Ï' => Some(168),
+            'á' => Some(169),
+            'é' => Some(170),
+            'í' => Some(171),
+            'ó' => Some(172),
+            'ú' => Some(173),
+            'ý' => Some(174),
+            'Á' => Some(175),
+            'É' => Some(176),
+            'Í' => Some(177),
+            'Ó' => Some(178),
+            'Ú' => Some(179),
+            'Ý' => Some(180),
+            'à' => Some(181),
+            'è' => Some(182),
+            'ì' => Some(183),
+            'ò' => Some(184),
+            'ù' => Some(185),
+            'À' => Some(186),
+            'È' => Some(187),
+            'Ì' => Some(188),
+            'Ò' => Some(189),
+            'Ù' => Some(190),
+            'â' => Some(191),
+            'ê' => Some(192),
+            'î' => Some(193),
+            'ô' => Some(194),
+            'û' => Some(195),
+            'Â' => Some(196),
+            'Ê' => Some(197),
+            'Î' => Some(198),
+            'Ô' => Some(199),
+            'Û' => Some(200),
+            'å' => Some(201),
+            'Å' => Some(202),
+            'ø' => Some(203),
+            'Ø' => Some(204),
+            'ã' => Some(205),
+            'ñ' => Some(206),
+            'õ' => Some(207),
+            'Ã' => Some(208),
+            'Ñ' => Some(209),
+            'Õ' => Some(210),
+            'æ' => Some(211),
+            'Æ' => Some(212),
+            'ç' => Some(213),
+            'Ç' => Some(214),
+            'þ' => Some(215),
+            'ð' => Some(216),
+            'Þ' => Some(217),
+            'Ð' => Some(218),
+            '£' => Some(219),
+            'œ' => Some(220),
+            'Œ' => Some(221),
+            '¡' => Some(222),
+            '¿' => Some(223),
+            _ => None
+        }
+    }
+
     fn sread_v1(&self, state: &mut FrameStack, interface: &mut dyn Interface) -> Result<InstructionResult,InfocomError> {
         self.show_status(state, interface)?;
 
@@ -731,15 +807,11 @@ impl Instruction {
         let parse_buffer = self.get_argument(state, 1)? as usize;
         let max_chars = state.get_memory().get_byte(text_buffer)? as usize - 1;
 
-        debug!("Text buffer: ${:04x} for ${:02x} bytes", text_buffer, max_chars);
-
         let mut input = interface.read(HashSet::from_iter(vec!['\n', '\r']), max_chars);
         // Remove the terminating character from the buffer...
         let terminator = input.pop();
-        debug!("Input: {}", input);
 
-        let encoder = Encoder::new(state.get_memory())?;
-        let mut input_bytes = encoder.to_bytes(&input);
+        let mut input_bytes:Vec<u8> = input.chars().map(|c| c as u8).collect();
         // ...and replace it with a 0 byte
         input_bytes.push(0);
 
@@ -752,8 +824,6 @@ impl Instruction {
         }
 
         let max_words = state.get_memory().get_byte(parse_buffer)?;
-        debug!("Parse buffer: ${:04x} for ${:02x} words", parse_buffer, max_words);
-
         let dic = Dictionary::new(state.get_memory())?;
         dic.analyze_text(state, &input, parse_buffer)?;
 
@@ -769,9 +839,9 @@ impl Instruction {
     }
 
     fn print_char(&self, state: &mut FrameStack, interface: &mut dyn Interface) -> Result<InstructionResult,InfocomError> {
-        let z = self.get_argument(state, 0)?;
-        let d = Decoder::new(state.get_memory())?;
-        interface.print(&format!("{}", d.zscii_to_char(z)?));
+        let z = self.get_argument(state, 0)? as u8;
+        debug!("print_char {:02x}", z);
+        interface.print(&format!("{}", z as char));
 
         Ok(InstructionResult::default())
     }
